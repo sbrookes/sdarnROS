@@ -27,10 +27,31 @@ int		writingFIFO=0, dma_count=0, under_flag=0,empty_flag=0,IRQ, intid;
 int		max_seq_count, xfercount, totransfer;
 uintptr_t	mmap_io_ptr_dio;
 unsigned char	*BASE0_dio, *io_BASE1_dio, *BASE1_phys_dio;
-unsigned int	virtual_addr[1], physical_addr[1];
+unsigned int	virtual_addr[1], physical_addr[1];  // SLB unsigned int ptr[1] == unsigned int *ptr
 struct sigevent interruptevent;
 int tr_event=0, scope_event=0;
 pthread_t int_thread;
+
+/*
+
+SLB
+
+TIMING CARD DRIVER
+
+TCPIP BEHAVIOR
+
+HOST = Driver
+CLIENT = Control Program
+
+*/
+/*
+
+SLB -- issues
+
+Inconsistent ways to write error (perror, fprintf...)
+
+*/
+
 void graceful_cleanup(int signum)
 {
   int temp;
@@ -125,6 +146,9 @@ void * int_handler(void *arg){
         pthread_exit(NULL);
 }
 
+
+
+
 int main(){
     // DECLARE AND INITIALIZE ANY NECESSARY VARIABLES
         int     maxclients=MAX_RADARS*MAX_CHANNELS;
@@ -184,6 +208,10 @@ int main(){
 //	int		 tau=2400, tperiod=1, tlength=300, time_array[10], intt=200, loopcount=0, fifocnt=0;
         int delay_count;
         unsigned long counter;
+
+        /* 
+        SLB - catch signals to ensure good cleanup
+        */
         signal(SIGINT, graceful_cleanup);
         signal(SIGTERM, graceful_cleanup);
         max_seq_count=0;
@@ -192,13 +220,16 @@ int main(){
 	for (r=0;r<MAX_RADARS;r++){
 	  for (c=0;c<MAX_CHANNELS;c++){
 	    if (verbose > 1) printf("%d %d\n",r,c);
-	    for (i=0;i<MAX_SEQS;i++) pulseseqs[r][c][i]=NULL;
+	    for (i=0;i<MAX_SEQS;i++) 
+            pulseseqs[r][c][i]=NULL;
             ready_index[r][c]=-1; 
             old_pulse_index[r][c]=-1; 
-            seq_buf[r][c]=malloc(4*MAX_TIME_SEQ_LEN);
+            seq_buf[r][c]=malloc(4*MAX_TIME_SEQ_LEN); /* SLB QQQQ magic number 4? */
            
           } 
         }
+
+
         bad_transmit_times.length=0;
         bad_transmit_times.start_usec=malloc(sizeof(unsigned int)*MAX_PULSES);
         bad_transmit_times.duration_usec=malloc(sizeof(unsigned int)*MAX_PULSES);
@@ -209,12 +240,16 @@ int main(){
 	new.nsec=10000;
 	new.fract=0;
 	temp=ClockPeriod(CLOCK_REALTIME,&new,0,0);
-	if(temp==-1) 	perror("Unable to change system clock resolution");
+	if(temp==-1) 	perror("Unable to change system clock resolution"); 
 	temp=ClockPeriod(CLOCK_REALTIME,0,&old,0);
 	if(temp==-1) 	perror("Unable to read sytem time");
 	clockresolution=old.nsec;
     /* OPEN THE PLX 9080 AND GET LOCAL BASE ADDRESSES */
+
+  /* SLB LCR registers... 7300A registers offset from here 
+     Where does this function live??? */
 	temp=_open_PLX9080(&BASE0_dio, &io_BASE1_dio, &BASE1_phys_dio, &pci_handle_dio, &mmap_io_dio, &IRQ_dio, 1);
+
 	IRQ=IRQ_dio;
 	printf("PLX9080 configuration IRQ: %d\n",IRQ);
 	if(temp==-1)	 fprintf(stderr, "PLX9080 configuration failed");
@@ -235,7 +270,7 @@ int main(){
 #ifdef __QNX__
 	if (temp == 1)	fprintf(stderr, "DMA buffers created sucessfully!\n");
 	else	fprintf(stderr, "DMA buffers creation error!\n");
-        fflush(stderr);
+        fflush(stderr);  /* SLB why... */
 
 
 
@@ -262,6 +297,8 @@ int main(){
 	out32(mmap_io_ptr_dio+0x1c, 0x00000000); //set triggers to rising edge polarity	
         temp=in32(mmap_io_ptr_dio+0x04);
 	out32(mmap_io_ptr_dio+0x04, 0x00000041); // wait for trigger terminations off
+
+  /* SLB -- Why?! you're just defining a constant a bunch of times, why make it so difficult */
         temp=256;
 	out32(mmap_io_ptr_dio+0x18, ((temp<<16) | temp) ); //set FIFO thresholds to 0 
 	out32(mmap_io_ptr_dio+0x18, ((temp<<16) | temp) ); //set FIFO thresholds to 0 
@@ -292,6 +329,9 @@ int main(){
 			return EXIT_FAILURE;
 		}
 		else while (rval>=0){
+
+                  /* SLB check out man select */
+
                   /* Look for messages from external client process */
                   FD_ZERO(&rfds);
                   FD_SET(msgsock, &rfds); //Add msgsock to the read watch
@@ -333,7 +373,7 @@ int main(){
                         r=client.radar-1; 
                         c=client.channel-1; 
 			if (verbose > 1) printf("Radar: %d, Channel: %d Beamnum: %d Status %d\n",
-			  client.radar,client.channel,client.tbeam,msg.status);	
+			                        client.radar,client.channel,client.tbeam,msg.status);	
 		        rval=recv_data(msgsock,&index,sizeof(index));
 		        if (verbose > 1) printf("Requested index: %d\n",index);	
 		        if (verbose > 1) printf("Attempting Free on pulseseq :p\n",pulseseqs[r][c][index]);	
